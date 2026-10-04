@@ -1,0 +1,3 @@
+- refs.ignorefile.dir is where you find reference projects.
+- we have logseq-selfhost which a docker based solution for hosting the db-sync server, but i would like a write a nix edition.
+- Also define module to declare.

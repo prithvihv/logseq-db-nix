@@ -1,0 +1,21 @@
+# Nix build outputs
+result
+result-*
+
+# direnv / nix-direnv
+.direnv/
+.envrc.local
+
+# NixOS VM test artifacts (interactive driver, `nixos-rebuild build-vm`)
+.nixos-test-history
+*.qcow2
+
+# Local reference checkouts
+*.ignorefile.*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
