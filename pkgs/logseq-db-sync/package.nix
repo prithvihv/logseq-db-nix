@@ -4,6 +4,7 @@
   stdenvNoCC,
   callPackage,
   fetchFromGitHub,
+  fetchzip,
   nodejs_24,
   pnpm_10,
   fetchPnpmDeps,
@@ -13,7 +14,6 @@
   git,
   cacert,
   python3,
-  srcOnly,
   makeBinaryWrapper,
   removeReferencesTo,
   cctools,
@@ -21,7 +21,15 @@
 
 let
   nodejs = nodejs_24;
-  nodeSources = srcOnly nodejs;
+  # Since 24.19.0, node_object_wrap.h removes a cleanup hook in ObjectWrap's
+  # destructor without the runtime support that needs, so better-sqlite3
+  # aborts when a Statement is garbage collected:
+  # https://github.com/nodejs/node/issues/65446. An addon built against
+  # 24.18.1 headers runs on any 24.x runtime.
+  nodeHeaders = fetchzip {
+    url = "https://nodejs.org/dist/v24.18.1/node-v24.18.1-headers.tar.gz";
+    hash = "sha256-1eRD0cO82bG4NDYyr5EhNjwGkl4qhcUF8xrfEytTlOQ=";
+  };
   pnpm = pnpm_10;
   clojure' = clojure.override { jdk = jdk21_headless; };
   pythonEnv = python3.withPackages (ps: [ ps.setuptools ]);
@@ -138,14 +146,14 @@ stdenv.mkDerivation (finalAttrs: {
     runHook preBuild
 
     # pnpmConfigHook installs with --ignore-scripts, so the native addon is
-    # built here, against the headers of the nodejs it will run on.
+    # built here.
     pushd node_modules/better-sqlite3
-    npm run build-release --offline --nodedir="${nodeSources}"
+    npm run build-release --offline --nodedir="${nodeHeaders}"
     # Only the addon is loaded at runtime; the gyp intermediates reference
     # the compiler toolchain and python.
     find build -type f ! -path build/Release/better_sqlite3.node -delete
     find build -type d -empty -delete
-    remove-references-to -t "${nodeSources}" build/Release/better_sqlite3.node
+    remove-references-to -t "${nodeHeaders}" build/Release/better_sqlite3.node
     popd
 
     pnpm run build:node-adapter
@@ -183,7 +191,7 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   disallowedRequisites = [
-    nodeSources
+    nodeHeaders
     pythonEnv
     jdk21_headless
   ];
