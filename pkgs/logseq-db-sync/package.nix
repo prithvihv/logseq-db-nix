@@ -153,9 +153,10 @@ stdenv.mkDerivation (finalAttrs: {
     runHook postBuild
   '';
 
-  # On macOS the suite aborts in better-sqlite3's Statement finalizer:
-  # https://github.com/WiseLibs/better-sqlite3/issues/1515
-  doCheck = !stdenv.hostPlatform.isDarwin;
+  # The suite can abort in better-sqlite3's Statement finalizer, on macOS and
+  # on Linux alike: https://github.com/WiseLibs/better-sqlite3/issues/1515
+  # passthru.tests.smoke and the NixOS test exercise the built server instead.
+  doCheck = false;
   checkPhase = ''
     runHook preCheck
     pnpm run test:node-adapter
