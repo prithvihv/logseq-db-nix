@@ -20,9 +20,6 @@ let
   port = cfg.settings.DB_SYNC_PORT;
   dataDir = cfg.settings.DB_SYNC_DATA_DIR;
   privilegedPort = port < 1024;
-
-  vhost = config.services.nginx.virtualHosts.${cfg.nginx.hostName};
-  vhostScheme = if vhost.forceSSL || vhost.onlySSL || vhost.addSSL then "https" else "http";
 in
 {
   options.services.logseq-db-sync = {
@@ -70,11 +67,17 @@ in
 
           DB_SYNC_BASE_URL = mkOption {
             type = types.nullOr types.str;
-            default = if cfg.nginx.enable then "${vhostScheme}://${cfg.nginx.hostName}" else null;
+            default =
+              if !cfg.caddy.enable then
+                null
+              else if lib.hasInfix "://" cfg.caddy.hostName then
+                cfg.caddy.hostName
+              else
+                "https://${cfg.caddy.hostName}";
             defaultText = literalMD ''
-              `https://` (or `http://` without TLS) followed by
-              {option}`services.logseq-db-sync.nginx.hostName` when
-              {option}`services.logseq-db-sync.nginx.enable` is set, otherwise `null`
+              {option}`services.logseq-db-sync.caddy.hostName`, prefixed with
+              `https://` unless it already has a scheme, when
+              {option}`services.logseq-db-sync.caddy.enable` is set, otherwise `null`
             '';
             example = "https://sync.example.com";
             description = ''
@@ -127,17 +130,18 @@ in
       description = "Open {option}`services.logseq-db-sync.settings.DB_SYNC_PORT` in the firewall.";
     };
 
-    nginx = {
-      enable = mkEnableOption "an nginx virtual host that proxies HTTP and WebSocket traffic to the sync server";
+    caddy = {
+      enable = mkEnableOption "a Caddy virtual host that proxies HTTP and WebSocket traffic to the sync server";
 
       hostName = mkOption {
         type = types.str;
         example = "sync.example.com";
         description = ''
-          Name of the nginx virtual host. TLS and anything else about the vhost
-          is configured through
-          {option}`services.nginx.virtualHosts.<name>`, e.g. `enableACME` and
-          `forceSSL`.
+          Site address of the Caddy virtual host. Caddy obtains a certificate
+          for it automatically and serves HTTPS; prefix it with `http://` to
+          serve plain HTTP instead. Anything else about the site, e.g. a `tls`
+          directive, is configured through
+          {option}`services.caddy.virtualHosts.<name>`.
         '';
       };
     };
@@ -216,23 +220,15 @@ in
 
     networking.firewall.allowedTCPPorts = lib.optional cfg.openFirewall port;
 
-    services.nginx = mkIf cfg.nginx.enable {
+    services.caddy = mkIf cfg.caddy.enable {
       enable = true;
-      virtualHosts.${cfg.nginx.hostName}.locations."/" = {
-        proxyPass = "http://127.0.0.1:${toString port}";
-        proxyWebsockets = true;
-        recommendedProxySettings = true;
-        extraConfig = ''
-          # Graph snapshot uploads can be larger than any fixed cap; the
-          # server enforces its own limits (100 MiB per asset).
-          client_max_body_size 0;
-          proxy_request_buffering off;
-          # Clients send no WebSocket keepalives, so idle sync sockets would
-          # otherwise be cut after nginx's 60s default.
-          proxy_read_timeout 1h;
-          proxy_send_timeout 1h;
-        '';
-      };
+      # Relies on Caddy's defaults of no request body limit (graph snapshot
+      # uploads can be larger than any fixed cap; the server enforces its own
+      # limits) and no timeout on WebSocket streams (clients send no
+      # keepalives, so sync sockets sit idle).
+      virtualHosts.${cfg.caddy.hostName}.extraConfig = ''
+        reverse_proxy 127.0.0.1:${toString port}
+      '';
     };
   };
 }
