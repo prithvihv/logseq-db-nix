@@ -8,6 +8,7 @@
 let
   inherit (lib)
     literalExpression
+    literalMD
     mkEnableOption
     mkIf
     mkOption
@@ -18,12 +19,10 @@ let
   cfg = config.services.logseq-db-sync;
   port = cfg.settings.DB_SYNC_PORT;
   dataDir = cfg.settings.DB_SYNC_DATA_DIR;
-  lowPort = port < 1024;
+  privilegedPort = port < 1024;
 
   vhost = config.services.nginx.virtualHosts.${cfg.nginx.hostName};
   vhostScheme = if vhost.forceSSL || vhost.onlySSL || vhost.addSSL then "https" else "http";
-
-  logseqCognitoIssuer = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_dtagLnju8";
 in
 {
   options.services.logseq-db-sync = {
@@ -36,9 +35,10 @@ in
       description = ''
         Environment variables passed to the sync server. See the
         [db-sync README](https://github.com/logseq/logseq/blob/master/deps/db-sync/README.md#environment-variables)
-        for the full list. Secrets such as `DB_SYNC_ADMIN_TOKEN` or
-        `SENTRY_DSN` belong in {option}`services.logseq-db-sync.environmentFiles`
-        so they stay out of the Nix store.
+        for the full list; note that the Node.js adapter ignores
+        `DB_SYNC_ADMIN_TOKEN`. Secrets such as `SENTRY_DSN` belong in
+        {option}`services.logseq-db-sync.environmentFiles` so they stay out of
+        the Nix store.
       '';
       type = types.submodule {
         freeformType = types.attrsOf (
@@ -71,8 +71,10 @@ in
           DB_SYNC_BASE_URL = mkOption {
             type = types.nullOr types.str;
             default = if cfg.nginx.enable then "${vhostScheme}://${cfg.nginx.hostName}" else null;
-            defaultText = literalExpression ''
-              if nginx.enable then "''${scheme}://''${nginx.hostName}" else null
+            defaultText = literalMD ''
+              `https://` (or `http://` without TLS) followed by
+              {option}`services.logseq-db-sync.nginx.hostName` when
+              {option}`services.logseq-db-sync.nginx.enable` is set, otherwise `null`
             '';
             example = "https://sync.example.com";
             description = ''
@@ -85,7 +87,7 @@ in
 
           COGNITO_ISSUER = mkOption {
             type = types.str;
-            default = logseqCognitoIssuer;
+            default = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_dtagLnju8";
             description = ''
               Issuer of the JWTs clients authenticate with. The default is the
               Logseq account pool the official apps log in against.
@@ -101,7 +103,7 @@ in
           COGNITO_JWKS_URL = mkOption {
             type = types.str;
             default = "${cfg.settings.COGNITO_ISSUER}/.well-known/jwks.json";
-            defaultText = literalExpression ''"''${COGNITO_ISSUER}/.well-known/jwks.json"'';
+            defaultText = literalExpression ''"''${config.services.logseq-db-sync.settings.COGNITO_ISSUER}/.well-known/jwks.json"'';
             description = "Where signing keys for client JWTs are fetched from. Must be reachable from the server.";
           };
         };
@@ -114,8 +116,8 @@ in
       example = [ "/run/secrets/logseq-db-sync.env" ];
       description = ''
         Files with additional `KEY=value` environment variables, loaded with
-        systemd's `EnvironmentFile=`. Use this for `DB_SYNC_ADMIN_TOKEN`,
-        `SENTRY_DSN` and other secrets.
+        systemd's `EnvironmentFile=`. Use this for `SENTRY_DSN` and other
+        secrets.
       '';
     };
 
@@ -158,8 +160,7 @@ in
     systemd.services.logseq-db-sync = {
       description = "Logseq DB sync server";
       wantedBy = [ "multi-user.target" ];
-      wants = [ "network-online.target" ];
-      after = [ "network-online.target" ];
+      after = [ "network.target" ];
 
       environment = lib.mapAttrs (_: toString) (lib.filterAttrs (_: v: v != null) cfg.settings);
 
@@ -175,14 +176,16 @@ in
         Restart = "always";
         RestartSec = 5;
 
-        AmbientCapabilities = lib.optional lowPort "CAP_NET_BIND_SERVICE";
-        CapabilityBoundingSet = lib.optional lowPort "CAP_NET_BIND_SERVICE";
+        AmbientCapabilities = lib.optional privilegedPort "CAP_NET_BIND_SERVICE";
+        CapabilityBoundingSet = lib.optional privilegedPort "CAP_NET_BIND_SERVICE";
         LockPersonality = true;
         # MemoryDenyWriteExecute is left off: V8's JIT needs W+X pages.
         NoNewPrivileges = true;
         PrivateDevices = true;
         PrivateTmp = true;
-        PrivateUsers = !lowPort;
+        # Capabilities granted inside a private user namespace do not apply
+        # to binding ports on the host.
+        PrivateUsers = !privilegedPort;
         ProcSubset = "pid";
         ProtectClock = true;
         ProtectControlGroups = true;

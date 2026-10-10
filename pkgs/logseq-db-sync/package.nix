@@ -112,6 +112,8 @@ stdenv.mkDerivation (finalAttrs: {
     outputHash = "sha256-P7cL9QAwP/zl8cdgtQy4HuGTWlOj7Nceyyi9KsBhosY=";
   };
 
+  strictDeps = true;
+
   nativeBuildInputs = [
     nodejs
     pnpm
@@ -123,9 +125,20 @@ stdenv.mkDerivation (finalAttrs: {
   ]
   ++ lib.optionals stdenv.hostPlatform.isDarwin [ cctools.libtool ];
 
+  # Point the Clojure CLI at cljDeps so the upstream pnpm scripts, which call
+  # `clojure -M:cljs ...`, run offline.
+  postConfigure = ''
+    export GITLIBS="${finalAttrs.cljDeps}/gitlibs"
+    export CLJ_CONFIG="$TMPDIR/clojure"
+    mkdir -p "$CLJ_CONFIG"
+    echo '{:mvn/local-repo "${finalAttrs.cljDeps}/m2"}' > "$CLJ_CONFIG/deps.edn"
+  '';
+
   buildPhase = ''
     runHook preBuild
 
+    # pnpmConfigHook installs with --ignore-scripts, so the native addon is
+    # built here, against the headers of the nodejs it will run on.
     pushd node_modules/better-sqlite3
     npm run build-release --offline --nodedir="${nodeSources}"
     # Only the addon is loaded at runtime; the gyp intermediates reference
@@ -135,16 +148,24 @@ stdenv.mkDerivation (finalAttrs: {
     remove-references-to -t "${nodeSources}" build/Release/better_sqlite3.node
     popd
 
-    export GITLIBS="${finalAttrs.cljDeps}/gitlibs"
-    clojure -Sdeps '{:mvn/local-repo "${finalAttrs.cljDeps}/m2"}' -M:cljs release db-sync-node
-
-    CI=true pnpm prune --prod --ignore-workspace
+    pnpm run build:node-adapter
 
     runHook postBuild
   '';
 
+  # On macOS the suite aborts in better-sqlite3's Statement finalizer:
+  # https://github.com/WiseLibs/better-sqlite3/issues/1515
+  doCheck = !stdenv.hostPlatform.isDarwin;
+  checkPhase = ''
+    runHook preCheck
+    pnpm run test:node-adapter
+    runHook postCheck
+  '';
+
   installPhase = ''
     runHook preInstall
+
+    CI=true pnpm prune --prod --ignore-workspace
 
     libdir="$out/lib/logseq-db-sync"
     mkdir -p "$libdir/worker/dist"
@@ -159,6 +180,12 @@ stdenv.mkDerivation (finalAttrs: {
 
     runHook postInstall
   '';
+
+  disallowedRequisites = [
+    nodeSources
+    pythonEnv
+    jdk21_headless
+  ];
 
   passthru.tests.smoke = callPackage ./smoke-test.nix { logseq-db-sync = finalAttrs.finalPackage; };
 

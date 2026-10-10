@@ -23,9 +23,10 @@
         pkgs:
         self.packages.${pkgs.stdenv.hostPlatform.system}.logseq-db-sync.tests
         // {
-          nixos = pkgs.testers.runNixOSTest (
-            import ./nixos/tests/logseq-db-sync.nix { module = self.nixosModules.default; }
-          );
+          nixos = pkgs.testers.runNixOSTest {
+            imports = [ ./nixos/tests/logseq-db-sync.nix ];
+            defaults.imports = [ self.nixosModules.default ];
+          };
         }
       );
 
