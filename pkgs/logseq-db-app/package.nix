@@ -89,10 +89,13 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     pnpm
     pnpmConfigHook
     clojure'
+    # The shadow-cljs build hook runs `git describe` even when
+    # LOGSEQ_REVISION is set, and aborts if git is missing.
+    git
   ];
 
-  # Read by the shadow-cljs build hook, which otherwise shells out to git
-  # and stamps the current time.
+  # Read by the shadow-cljs build hook in place of `git describe` and the
+  # current time.
   env = {
     LOGSEQ_REVISION = finalAttrs.src.rev;
     LOGSEQ_BUILD_TIME = "1970-01-01T00:00:00Z";
@@ -113,9 +116,11 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     runHook postBuild
   '';
 
+  # static/ also collects files for the desktop and mobile builds.
   installPhase = ''
     runHook preInstall
 
+    rm -r static/{db-worker-node.js{,.map},mobile,windows,electron-builder.yml,entitlements.plist,forge.config.test.js,package.json,pnpm-lock.yaml}
     cp -r static $out
 
     runHook postInstall
@@ -123,6 +128,12 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
   meta = {
     description = "Logseq web app (DB version), as static files to serve";
+    longDescription = ''
+      Serve the package as a web server's document root. Browsers only let
+      the app store graphs on HTTPS pages and on localhost. The app syncs
+      with Logseq's hosted service unless a user enters a self-hosted sync
+      server's URL under Settings > Advanced > Sync Server URL.
+    '';
     homepage = "https://github.com/logseq/logseq";
     license = lib.licenses.agpl3Only;
     platforms = lib.platforms.unix;

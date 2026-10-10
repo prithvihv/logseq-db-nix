@@ -1,5 +1,5 @@
 {
-  description = "Logseq DB sync server, packaged for Nix";
+  description = "Logseq DB sync server and web app, packaged for Nix";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -25,7 +25,7 @@
         self.packages.${pkgs.stdenv.hostPlatform.system}.logseq-db-sync.tests
         // {
           nixos = pkgs.testers.runNixOSTest {
-            imports = [ ./nixos/tests/logseq-db-sync.nix ];
+            imports = [ ./nixos/tests/logseq-db.nix ];
             defaults.imports = [ self.nixosModules.default ];
           };
         }
@@ -37,15 +37,19 @@
       };
 
       nixosModules = {
-        logseq-db-sync =
+        logseq-db =
           { lib, pkgs, ... }:
+          let
+            packages = self.packages.${pkgs.stdenv.hostPlatform.system};
+          in
           {
-            imports = [ ./nixos/modules/logseq-db-sync.nix ];
-            services.logseq-db-sync.package =
-              lib.mkDefault
-                self.packages.${pkgs.stdenv.hostPlatform.system}.logseq-db-sync;
+            imports = [ ./nixos/modules/logseq-db ];
+            services.logseq-db = {
+              syncServer.package = lib.mkDefault packages.logseq-db-sync;
+              webApp.package = lib.mkDefault packages.logseq-db-app;
+            };
           };
-        default = self.nixosModules.logseq-db-sync;
+        default = self.nixosModules.logseq-db;
       };
 
       formatter = forAllSystems (pkgs: pkgs.nixfmt-tree);

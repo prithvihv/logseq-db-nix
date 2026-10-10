@@ -8,7 +8,6 @@
 let
   inherit (lib)
     literalExpression
-    literalMD
     mkEnableOption
     mkIf
     mkOption
@@ -16,13 +15,13 @@ let
     types
     ;
 
-  cfg = config.services.logseq-db-sync;
+  cfg = config.services.logseq-db.syncServer;
   port = cfg.settings.DB_SYNC_PORT;
   dataDir = cfg.settings.DB_SYNC_DATA_DIR;
   privilegedPort = port < 1024;
 in
 {
-  options.services.logseq-db-sync = {
+  options.services.logseq-db.syncServer = {
     enable = mkEnableOption "the Logseq DB sync server";
 
     package = mkPackageOption pkgs "logseq-db-sync" { };
@@ -34,7 +33,7 @@ in
         [db-sync README](https://github.com/logseq/logseq/blob/master/deps/db-sync/README.md#environment-variables)
         for the full list; note that the Node.js adapter ignores
         `DB_SYNC_ADMIN_TOKEN`. Secrets such as `SENTRY_DSN` belong in
-        {option}`services.logseq-db-sync.environmentFiles` so they stay out of
+        {option}`services.logseq-db.syncServer.environmentFiles` so they stay out of
         the Nix store.
       '';
       type = types.submodule {
@@ -54,8 +53,15 @@ in
             description = ''
               Port the server listens on. The server has no bind address
               setting and always listens on all interfaces; keep
-              {option}`services.logseq-db-sync.openFirewall` off when it sits
+              {option}`services.logseq-db.syncServer.openFirewall` off when it sits
               behind a reverse proxy.
+
+              A reverse proxy in front of the server must pass WebSocket
+              upgrades, must not cap request bodies (graph snapshot uploads can
+              be large; the server enforces its own limits), and must not time
+              out idle WebSocket connections (clients send no keepalives). Set
+              {option}`services.logseq-db.syncServer.settings.DB_SYNC_BASE_URL`
+              to the proxy's public URL.
             '';
           };
 
@@ -67,18 +73,7 @@ in
 
           DB_SYNC_BASE_URL = mkOption {
             type = types.nullOr types.str;
-            default =
-              if !cfg.caddy.enable then
-                null
-              else if lib.hasInfix "://" cfg.caddy.hostName then
-                cfg.caddy.hostName
-              else
-                "https://${cfg.caddy.hostName}";
-            defaultText = literalMD ''
-              {option}`services.logseq-db-sync.caddy.hostName`, prefixed with
-              `https://` unless it already has a scheme, when
-              {option}`services.logseq-db-sync.caddy.enable` is set, otherwise `null`
-            '';
+            default = null;
             example = "https://sync.example.com";
             description = ''
               Public URL clients reach the server at. Its scheme and host are
@@ -106,7 +101,7 @@ in
           COGNITO_JWKS_URL = mkOption {
             type = types.str;
             default = "${cfg.settings.COGNITO_ISSUER}/.well-known/jwks.json";
-            defaultText = literalExpression ''"''${config.services.logseq-db-sync.settings.COGNITO_ISSUER}/.well-known/jwks.json"'';
+            defaultText = literalExpression ''"''${config.services.logseq-db.syncServer.settings.COGNITO_ISSUER}/.well-known/jwks.json"'';
             description = "Where signing keys for client JWTs are fetched from. Must be reachable from the server.";
           };
         };
@@ -127,23 +122,7 @@ in
     openFirewall = mkOption {
       type = types.bool;
       default = false;
-      description = "Open {option}`services.logseq-db-sync.settings.DB_SYNC_PORT` in the firewall.";
-    };
-
-    caddy = {
-      enable = mkEnableOption "a Caddy virtual host that proxies HTTP and WebSocket traffic to the sync server";
-
-      hostName = mkOption {
-        type = types.str;
-        example = "sync.example.com";
-        description = ''
-          Site address of the Caddy virtual host. Caddy obtains a certificate
-          for it automatically and serves HTTPS; prefix it with `http://` to
-          serve plain HTTP instead. Anything else about the site, e.g. a `tls`
-          directive, is configured through
-          {option}`services.caddy.virtualHosts.<name>`.
-        '';
-      };
+      description = "Open {option}`services.logseq-db.syncServer.settings.DB_SYNC_PORT` in the firewall.";
     };
   };
 
@@ -219,16 +198,5 @@ in
     };
 
     networking.firewall.allowedTCPPorts = lib.optional cfg.openFirewall port;
-
-    services.caddy = mkIf cfg.caddy.enable {
-      enable = true;
-      # Relies on Caddy's defaults of no request body limit (graph snapshot
-      # uploads can be larger than any fixed cap; the server enforces its own
-      # limits) and no timeout on WebSocket streams (clients send no
-      # keepalives, so sync sockets sit idle).
-      virtualHosts.${cfg.caddy.hostName}.extraConfig = ''
-        reverse_proxy 127.0.0.1:${toString port}
-      '';
-    };
   };
 }
