@@ -16,6 +16,7 @@
     {
       packages = forAllSystems (pkgs: rec {
         logseq-db-sync = pkgs.callPackage ./pkgs/logseq-db-sync/package.nix { };
+        logseq-db-app = pkgs.callPackage ./pkgs/logseq-db-app/package.nix { inherit logseq-db-sync; };
         default = logseq-db-sync;
       });
 
@@ -32,6 +33,7 @@
 
       overlays.default = final: _prev: {
         logseq-db-sync = final.callPackage ./pkgs/logseq-db-sync/package.nix { };
+        logseq-db-app = final.callPackage ./pkgs/logseq-db-app/package.nix { };
       };
 
       nixosModules = {
