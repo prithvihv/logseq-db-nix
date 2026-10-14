@@ -20,7 +20,7 @@ Add the flake as an input and import the module:
 
 ```nix
 {
-  inputs.logseq-db.url = "github:prithvihv/logseq-db-sync-nix";
+  inputs.logseq-db.url = "github:prithvihv/logseq-db-nix";
 
   outputs = { nixpkgs, logseq-db, ... }: {
     nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
