@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt:
+    name: nix fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - run: nix fmt -- --ci
+
+  build:
+    name: x86_64-linux
+    # The VM test needs KVM, which GitHub's x64 Linux runners have.
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - uses: DeterminateSystems/magic-nix-cache-action@v15
+        with:
+          use-flakehub: false
+
+      # The Clojure and Node toolchains plus the VM test closure don't fit in
+      # the space left after the runner image's preinstalled SDKs.
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - name: Build packages
+        run: nix build -L .#logseq-db-sync .#logseq-db-app
+
+      - name: Smoke test
+        run: nix build -L .#checks.x86_64-linux.smoke
+
+      - name: NixOS test
+        run: nix build -L .#checks.x86_64-linux.nixos
