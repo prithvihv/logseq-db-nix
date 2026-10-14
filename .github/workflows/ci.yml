@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - run: nix fmt -- --ci
+
+  build:
+    # The VM test needs KVM, which GitHub's x64 Linux runners have.
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - uses: DeterminateSystems/magic-nix-cache-action@v15
+        with:
+          use-flakehub: false
+
+      - name: Build packages
+        run: nix build -L .#logseq-db-sync .#logseq-db-app
+
+      - name: Smoke test
+        run: nix build -L .#checks.x86_64-linux.smoke
+
+      - name: NixOS test
+        run: nix build -L .#checks.x86_64-linux.nixos
+
+      - name: Disk usage
+        if: always()
+        run: df -h /
