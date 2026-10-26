@@ -5,7 +5,8 @@ Self-host [Logseq DB](https://github.com/logseq/logseq) sync + web app on NixOS.
 This flake packages Logseq's sync server (the Node.js adapter in
 [`deps/db-sync`](https://github.com/logseq/logseq/tree/master/deps/db-sync))
 and the DB-version web app, and ships a NixOS module that runs both as
-hardened systemd services.
+hardened systemd services. For hosting on the public internet it adds a small
+forward-auth server that limits the sync server to an allowlist of user ids.
 
 Nothing in nixpkgs covers this yet. The PR that adds the DB version of Logseq,
 [NixOS/nixpkgs#516682](https://github.com/NixOS/nixpkgs/pull/516682), has been
@@ -62,6 +63,71 @@ app on port 3001:
    `http://<host>:8787`.
 3. Download a graph, or enable sync for an existing one.
 
+### Hosting it publicly
+
+The sync server accepts any valid Logseq account. Put on the internet as-is,
+anyone with a (free) Logseq account could store their graphs on your server.
+
+`services.logseq-db.gate` runs `logseq-db-gate`, a forward-auth server for
+your reverse proxy. It is part of this flake, not of Logseq; the sync server
+itself has no allowlist. The proxy asks the gate about every request before passing
+it on; the gate verifies the Logseq token the client sent and only lets
+requests through whose user id is on the allowlist. It answers 401 when there
+is no valid token and 403 when the user is not allowed, and the proxy relays
+that to the client. Unauthenticated `/health` checks and CORS preflights pass.
+
+```nix
+{
+  services.logseq-db = {
+    syncServer = {
+      enable = true;
+      settings.DB_SYNC_BASE_URL = "https://sync.example.com";
+    };
+    gate = {
+      enable = true;
+      allowedUserIds = [ "6a1f0f3e-7c4b-4d1e-9b0a-2f8c1d5e7a9b" ];
+    };
+  };
+
+  services.caddy = {
+    enable = true;
+    virtualHosts."sync.example.com".extraConfig = ''
+      forward_auth 127.0.0.1:8788 {
+        uri /verify
+      }
+      reverse_proxy 127.0.0.1:8787
+    '';
+  };
+  networking.firewall.allowedTCPPorts = [ 80 443 ];
+}
+```
+
+Caddy handles TLS, WebSocket upgrades and large bodies without further
+configuration. Any proxy with a forward-auth step works the same way: the gate
+reads the original method and URI from `X-Forwarded-Method` and
+`X-Forwarded-Uri` (Caddy, Traefik) or `X-Original-Method` and `X-Original-URI`
+(nginx `auth_request`), and the token from the `Authorization` header or the
+`token` query parameter, which is how WebSocket clients send it.
+
+Leave `syncServer.openFirewall` off: whatever reaches port 8787 directly
+bypasses the gate.
+
+User ids are the `sub` claim of the Logseq account's token, a UUID; usernames
+and emails are not accepted. To find one, point a client at the server and
+sign in. The gate turns the user away and logs who it was:
+
+```console
+$ journalctl -u logseq-db-gate
+GET /graphs: denied user 6a1f0f3e-7c4b-4d1e-9b0a-2f8c1d5e7a9b (username "alice", email "alice@example.com"): not on the allowlist
+```
+
+To manage the list outside your Nix configuration, point
+`allowedUserIdsFile` at a file with one id per line (`#` starts a comment) and
+`systemctl reload logseq-db-gate` after editing it.
+
+The gate is a dependency-free Go program; `nix run .#logseq-db-gate -- -help`
+lists its flags if you want to run it without the module.
+
 ### Options
 
 `services.logseq-db.syncServer`
@@ -97,18 +163,37 @@ The web app is served without cache lifetimes. Its file names do not change
 between versions, so default `max-age` headers would mix old scripts with a
 new `index.html` after an upgrade.
 
+`services.logseq-db.gate`
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `enable` | `false` | Run the gate. |
+| `package` | `pkgs.logseq-db-gate` | Package to run. |
+| `listenAddress` | `127.0.0.1:8788` | Where the reverse proxy reaches the gate. Never opened in the firewall. |
+| `allowedUserIds` | `[ ]` | User ids (token `sub` claims) allowed to use the sync server. |
+| `allowedUserIdsFile` | `null` | File with one allowed user id per line, re-read on `systemctl reload`. |
+| `issuer` | `syncServer.settings.COGNITO_ISSUER` | Issuer of client JWTs. |
+| `clientIds` | `[ syncServer.settings.COGNITO_CLIENT_ID ]` | Accepted audiences of client JWTs. |
+| `jwksUrl` | `syncServer.settings.COGNITO_JWKS_URL` | Where signing keys are fetched from. |
+
+One of `allowedUserIds` and `allowedUserIdsFile` must be set. The gate fetches
+the signing keys on first use, caches them for six hours, and refetches (at
+most once a minute) when a token names a key it does not have, so key
+rotation at Logseq's end is picked up automatically.
+
 ## Flake outputs
 
 | Output | Description |
 | --- | --- |
-| `nixosModules.default` | `services.logseq-db.syncServer` and `services.logseq-db.webApp`. |
+| `nixosModules.default` | `services.logseq-db.syncServer`, `services.logseq-db.webApp` and `services.logseq-db.gate`. |
 | `packages.<system>.logseq-db-sync` | The sync server. `nix run` starts it. |
 | `packages.<system>.logseq-db-app` | The web app as static files, ready to serve as a document root. |
-| `overlays.default` | Adds both packages to `pkgs`. |
+| `packages.<system>.logseq-db-gate` | The forward-auth gate. |
+| `overlays.default` | Adds all three packages to `pkgs`. |
 
-Both packages are built from the same upstream commit, since the sync protocol
-changes on the client and server side together. Supported systems:
-`x86_64-linux`, `aarch64-linux`, `aarch64-darwin`.
+The sync server and web app are built from the same upstream commit, since the
+sync protocol changes on the client and server side together. Supported
+systems: `x86_64-linux`, `aarch64-linux`, `aarch64-darwin`.
 
 ## Build notes
 
