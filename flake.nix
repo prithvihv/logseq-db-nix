@@ -17,6 +17,7 @@
       packages = forAllSystems (pkgs: rec {
         logseq-db-sync = pkgs.callPackage ./pkgs/logseq-db-sync/package.nix { };
         logseq-db-app = pkgs.callPackage ./pkgs/logseq-db-app/package.nix { inherit logseq-db-sync; };
+        logseq-db-gate = pkgs.callPackage ./pkgs/logseq-db-gate/package.nix { };
         default = logseq-db-sync;
       });
 
@@ -34,6 +35,7 @@
       overlays.default = final: _prev: {
         logseq-db-sync = final.callPackage ./pkgs/logseq-db-sync/package.nix { };
         logseq-db-app = final.callPackage ./pkgs/logseq-db-app/package.nix { };
+        logseq-db-gate = final.callPackage ./pkgs/logseq-db-gate/package.nix { };
       };
 
       nixosModules = {
@@ -47,6 +49,7 @@
             services.logseq-db = {
               syncServer.package = lib.mkDefault packages.logseq-db-sync;
               webApp.package = lib.mkDefault packages.logseq-db-app;
+              gate.package = lib.mkDefault packages.logseq-db-gate;
             };
           };
         default = self.nixosModules.logseq-db;

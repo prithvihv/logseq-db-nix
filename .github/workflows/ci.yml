@@ -35,7 +35,7 @@ jobs:
           use-flakehub: false
 
       - name: Build packages
-        run: nix build -L .#logseq-db-sync .#logseq-db-app
+        run: nix build -L .#logseq-db-sync .#logseq-db-app .#logseq-db-gate
 
       - name: Smoke test
         run: nix build -L .#checks.x86_64-linux.smoke
