@@ -25,6 +25,7 @@ buildGoModule {
 
   meta = {
     description = "Forward-auth gate that limits a Logseq DB sync server to an allowlist of user ids";
+    license = lib.licenses.agpl3Only;
     mainProgram = "logseq-db-gate";
     platforms = lib.platforms.unix;
   };
